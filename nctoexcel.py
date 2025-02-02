@@ -9,6 +9,7 @@ import plotly.express as px
 import dask.array as da
 import dask.dataframe as dd
 from dask.distributed import Client, LocalCluster
+import logging
 
 # Memory and Performance Configuration
 APP_CONFIG = {
@@ -22,13 +23,15 @@ APP_CONFIG = {
 os.environ['MALLOC_TRIM_THRESHOLD_'] = '65536'
 os.environ['PYTHONMALLOC'] = 'malloc'
 
-# Initialize Dask client
-@st.cache_resource
+# Initialize Dask client with clean output
+@st.cache_resource(show_spinner=False)
 def setup_dask():
-    cluster = LocalCluster(n_workers=4, 
-                          threads_per_worker=2,
-                          memory_limit='4GB')
-    return Client(cluster)
+    with st.spinner('Initializing processing engine...'):
+        cluster = LocalCluster(n_workers=4, 
+                             threads_per_worker=2,
+                             memory_limit='4GB',
+                             silence_logs=logging.ERROR)
+        return Client(cluster)
 
 client = setup_dask()
 
