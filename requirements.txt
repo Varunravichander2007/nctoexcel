@@ -1,10 +1,5 @@
-streamlit>=1.24.0
-xarray>=2023.1.0
-pandas>=2.0.0
-numpy>=1.24.0
-plotly>=5.14.0
-dask>=2023.3.0
-netCDF4>=1.6.3
-scipy>=1.10.0
-distributed>=2023.3.0
-xlsxwriter>=3.1.0
+streamlit
+xarray
+pandas
+numpy
+plotly
