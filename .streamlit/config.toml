@@ -2,21 +2,16 @@
 maxUploadSize = 2000
 port = 8501
 address = "0.0.0.0"
-enableXsrfProtection = false
-enableCORS = false
+enableCORS = true
 headless = true
 runOnSave = true
 
 [browser]
 serverAddress = "0.0.0.0"
 serverPort = 8501
-gatherUsageStats = false
 
 [theme]
 primaryColor = "#F63366"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F0F2F6"
 textColor = "#262730"
-
-[global]
-developmentMode = false
