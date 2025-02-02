@@ -1,10 +1,5 @@
-streamlit
-xarray
 pandas
 numpy
 plotly
+netCDF4
 xlsxwriter
-gzip
-zipfile36
-concurrent.futures
-pathlib
