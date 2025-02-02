@@ -219,7 +219,7 @@ with col4:
         st.session_state['merged_ds'] = None
         st.session_state['time_var'] = None
         st.session_state['single_ds'] = None
-        st.experimental_rerun()
+        st.rerun()
 st.markdown("---")
 # Page Content
 if st.session_state['page'] == 'home':
@@ -308,8 +308,8 @@ elif st.session_state['page'] == 'merge':
 # Footer
 st.markdown("---")
 st.markdown("""
-### 📝 For Support And Assitance:
+### 📝 For Support And Assistance:
 Contact:
-Harshitha-gunnamharshitha2@gmail.com
-Varun-varunravichander2007@gmail.com
+-gunnamharshitha2@gmail.com
+-varunravichander2007@gmail.com
 """)
