@@ -5,13 +5,28 @@ address = "0.0.0.0"
 enableCORS = true
 headless = true
 runOnSave = true
+enableXsrfProtection = true
+maxMessageSize = 1000
+connectTimeout = 60
+baseUrlPath = ""
 
 [browser]
 serverAddress = "0.0.0.0"
 serverPort = 8501
+gatherUsageStats = false
 
 [theme]
 primaryColor = "#F63366"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F0F2F6"
 textColor = "#262730"
+font = "sans serif"
+
+[client]
+showErrorDetails = true
+caching = true
+displayEnabled = true
+
+[logger]
+level = "info"
+messageFormat = "%(asctime)s %(message)s"
