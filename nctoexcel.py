@@ -6,12 +6,15 @@ import io
 import tempfile
 import os
 import plotly.express as px
+import shutil
+
 # Page configuration
 st.set_page_config(
     page_title="NetCDF File Manager",
     page_icon="📊",
     layout="wide"
 )
+
 # Initialize session state if not already done
 if 'page' not in st.session_state:
     st.session_state['page'] = 'home'
@@ -19,6 +22,7 @@ if 'page' not in st.session_state:
     st.session_state['merged_ds'] = None
     st.session_state['time_var'] = None
     st.session_state['single_ds'] = None
+
 def find_time_variable(ds):
     """Find the time variable in the dataset"""
     time_vars = ['valid_time', 'time', 'TIME', 'datetime', 'date', 'Time']
@@ -26,12 +30,14 @@ def find_time_variable(ds):
         if var in ds.variables:
             return var
     return None
+
 def get_variable_units(ds, var_name):
     """Get original units from NC file"""
     try:
         return ds[var_name].attrs.get('units', 'No unit specified')
     except:
         return 'No unit specified'
+
 def convert_point_nc_to_excel(ds, selected_vars, lat, lon, time_var):
     """Convert selected variables to Excel"""
     ds_point = ds.sel(latitude=lat, longitude=lon, method='nearest')
@@ -57,6 +63,7 @@ def convert_point_nc_to_excel(ds, selected_vars, lat, lon, time_var):
             df[column_name] = var_data.flatten()
     
     return df
+
 def merge_datasets(datasets):
     """Merge multiple datasets"""
     if len(datasets) == 0:
@@ -64,11 +71,12 @@ def merge_datasets(datasets):
     if len(datasets) == 1:
         return datasets[0]
     return xr.merge(datasets)
+    
 def visualize_data(df, selected_vars):
     """Create interactive plots with multiple variables on single plot"""
     
     # Convert time format to HH:MM YYYY-MM-DD
-    df['formatted_time'] = pd.to_datetime(df['observation_time (UTC)']).dt.strftime('%H:%M %Y-%m-%d')
+    df['formatted_time'] = pd.to_datetime(df['observation_time (UTC)']).dt.strftime('%d-%m-%y %H:%M')
     
     # Create figure with reformatted time labels
     fig = px.line(df, x='formatted_time', y=selected_vars,
@@ -98,8 +106,8 @@ def visualize_data(df, selected_vars):
             linewidth=1,
             linecolor='black',
             mirror=True,
-            tickangle=45,
-            title_text='Time (HH:MM YYYY-MM-DD)'
+            tickangle=-90,  # Changed to 90 for vertical labels
+            title_text=''
         ),
         yaxis=dict(
             showgrid=True,
@@ -140,96 +148,114 @@ def visualize_data(df, selected_vars):
         file_name="plot.html",
         mime="text/html"
     )
+
+
+
 def process_dataset(ds):
-    """Process single dataset and display options"""
-    time_var = find_time_variable(ds)
-    if not time_var:
-        st.error("No time variable found in the dataset.")
-        return
-    st.write("### Dataset Information:")
-    st.write(f"Dimensions: {dict(ds.dims)}")
-    
-    var_info = []
-    for var in ds.variables:
-        var_obj = ds[var]
-        original_unit = get_variable_units(ds, var)
-        var_info.append({
-            'Variable': var,
-            'Unit': original_unit,
-            'Dimensions': ', '.join(var_obj.dims),
-            'Description': var_obj.attrs.get('long_name', 'No description available')
-        })
-    st.table(pd.DataFrame(var_info))
-    available_vars = [var for var in ds.variables
-                     if var not in ['latitude', 'longitude', 'lat', 'lon', time_var]]
-    
-    selected_vars = st.multiselect("Select variables to extract:", available_vars)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        latitude = st.number_input("Latitude (DD)",
-                                 value=float(ds.latitude.mean()),
-                                 min_value=float(ds.latitude.min()),
-                                 max_value=float(ds.latitude.max()))
-    with col2:
-        longitude = st.number_input("Longitude (DD)",
-                                  value=float(ds.longitude.mean()),
-                                  min_value=float(ds.longitude.min()),
-                                  max_value=float(ds.longitude.max()))
-    
-    action = st.radio("Choose action:", ["Visualize", "Excel"])
-    
-    if selected_vars and st.button("Generate"):
-        df = convert_point_nc_to_excel(ds, selected_vars, latitude, longitude, time_var)
+    try:
+        time_var = find_time_variable(ds)
+        if not time_var:
+            st.error("No time variable found in the dataset.")
+            return
+        st.write("### Dataset Information:")
+        st.write(f"Dimensions: {dict(ds.dims)}")
         
-        if action == "Visualize":
-            visualize_data(df, df.columns[3:])
-        else:
-            st.write("### Data Preview:")
-            st.dataframe(df.head())
+        var_info = []
+        for var in ds.variables:
+            var_obj = ds[var]
+            original_unit = get_variable_units(ds, var)
+            var_info.append({
+                'Variable': var,
+                'Unit': original_unit,
+                'Dimensions': ', '.join(var_obj.dims),
+                'Description': var_obj.attrs.get('long_name', 'No description available')
+            })
+        st.table(pd.DataFrame(var_info))
+        
+        available_vars = [var for var in ds.variables
+                         if var not in ['latitude', 'longitude', 'lat', 'lon', time_var]]
+        
+        selected_vars = st.multiselect("Select variables to extract:", available_vars)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            latitude = st.number_input("Latitude (DD)",
+                                     value=float(ds.latitude.mean()),
+                                     min_value=float(ds.latitude.min()),
+                                     max_value=float(ds.latitude.max()))
+        with col2:
+            longitude = st.number_input("Longitude (DD)",
+                                      value=float(ds.longitude.mean()),
+                                      min_value=float(ds.longitude.min()),
+                                      max_value=float(ds.longitude.max()))
+        
+        action = st.radio("Choose action:", ["Visualize", "Excel"])
+        
+        if selected_vars and st.button("Generate"):
+            df = convert_point_nc_to_excel(ds, selected_vars, latitude, longitude, time_var)
             
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False)
-            output.seek(0)
-            
-            st.download_button(
-                label="📥 Download",
-                data=output.getvalue(),
-                file_name=f"data_{latitude}_{longitude}.xlsx",
-                mime="application/vnd.ms-excel"
-            )
-            st.success("✅ File ready for download!")
+            if action == "Visualize":
+                visualize_data(df, df.columns[3:])
+            else:
+                st.write("### Data Preview:")
+                st.dataframe(df.head())
+                
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False)
+                output.seek(0)
+                
+                st.download_button(
+                    label="📥 Download",
+                    data=output.getvalue(),
+                    file_name=f"data_{latitude}_{longitude}.xlsx",
+                    mime="application/vnd.ms-excel"
+                )
+                st.success("✅ File ready for download!")
+    finally:
+        if 'temp_dir' in locals():
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
+
 # Top Navigation
 st.title('🌟 NetCDF File Manager')
+
 col1, col2, col3, col4 = st.columns([1,1,1,1])
 with col1:
-    if st.button('🏠 Home'):
+    if st.button('🏠 Home', key='home_button'):
         st.session_state['page'] = 'home'
-with col2:
-    if st.button('📥 Convert NC to Excel'):
-        st.session_state['page'] = 'convert'
-with col3:
-    if st.button('🔄 Merge NC Files'):
-        st.session_state['page'] = 'merge'
-with col4:
-    if st.button('🔄 Reset', key="reset"):
-        st.session_state['page'] = 'home'
-        st.session_state['datasets'] = []
-        st.session_state['merged_ds'] = None
-        st.session_state['time_var'] = None
-        st.session_state['single_ds'] = None
         st.rerun()
+
+with col2:
+    if st.button('📥 Convert NC to Excel', key='convert_button'):
+        st.session_state['page'] = 'convert'
+        st.rerun()
+
+with col3:
+    if st.button('🔄 Merge NC Files', key='merge_button'):
+        st.session_state['page'] = 'merge'
+        st.rerun()
+
+with col4:
+    if st.button('🔄 Reset', key="reset_button"):
+        for key in st.session_state.keys():
+            del st.session_state[key]
+        st.session_state['page'] = 'home'
+        st.rerun()
+
 st.markdown("---")
+
 # Page Content
 if st.session_state['page'] == 'home':
     st.header("Welcome to NetCDF File Manager!")
     st.write("""
     ### Choose an operation from the top navigation:
     
-    - **Convert NC to Excel**: Convert single NC file to Excel format
-    - **Merge NC Files**: Merge multiple NC files and export/visualize
-    - **Reset**: Clear all data and start fresh
+    - *Convert NC to Excel*: Convert single NC file to Excel format
+    - *Merge NC Files*: Merge multiple NC files and export/visualize
+    - *Reset*: Clear all data and start fresh
     
     ### Features Available:
     - Single file conversion
@@ -239,6 +265,7 @@ if st.session_state['page'] == 'home':
     - Original units preservation
     - Time series analysis
     """)
+
 elif st.session_state['page'] == 'convert':
     st.header("Convert NC File to Excel")
     uploaded_file = st.file_uploader("Upload your .nc file", type='nc')
@@ -259,6 +286,7 @@ elif st.session_state['page'] == 'convert':
                 os.rmdir(temp_dir)
             except:
                 pass
+
 elif st.session_state['page'] == 'merge':
     st.header("Merge Multiple NC Files")
     st.info("Please upload at least 2 NC files for merging")
@@ -305,11 +333,15 @@ elif st.session_state['page'] == 'merge':
                         process_dataset(st.session_state['merged_ds'])
                     else:
                         st.error("Error merging datasets. Please check your files.")
+
 # Footer
 st.markdown("---")
 st.markdown("""
 ### 📝 For Support And Assistance:
+
 Contact:
--gunnamharshitha2@gmail.com
--varunravichander2007@gmail.com
+- Harshitha Gunnam
+  gunnamharshitha2@gmail.com
+- Varun Ravichander
+  varunravichander2007@gmail.com
 """)
