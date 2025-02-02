@@ -6,107 +6,71 @@ import io
 import tempfile
 import os
 import plotly.express as px
-import dask.array as da
-import dask.dataframe as dd
-from dask.distributed import Client, LocalCluster
-import logging
-
-# Memory and Performance Configuration
-APP_CONFIG = {
-    'MAX_FILE_SIZE': 5120,  # 5GB in MB
-    'MAX_PLOT_POINTS': 2000,
-    'CHUNK_SIZE': 500,
-    'CACHE_TTL': 7200,
-}
-
-# Memory optimization settings
-os.environ['MALLOC_TRIM_THRESHOLD_'] = '65536'
-os.environ['PYTHONMALLOC'] = 'malloc'
-
-# Initialize Dask client with clean output
-@st.cache_resource(show_spinner=False, ttl=3600)
-def setup_dask():
-    cluster = LocalCluster(n_workers=4, 
-                         threads_per_worker=2,
-                         memory_limit='4GB',
-                         silence_logs=logging.ERROR,
-                         dashboard_address=None)
-    return Client(cluster, set_as_default=True)
-
-# Initialize client at the start
-if 'dask_client' not in st.session_state:
-    st.session_state.dask_client = setup_dask()
-
 # Page configuration
 st.set_page_config(
     page_title="NetCDF File Manager",
     page_icon="📊",
     layout="wide"
 )
-
-# Initialize session state
+# Initialize session state if not already done
 if 'page' not in st.session_state:
-    st.session_state.update({
-        'page': 'home',
-        'datasets': [],
-        'merged_ds': None,
-        'time_var': None,
-        'single_ds': None
-    })
-
-@st.cache_data
-def load_large_nc_file(file_content):
-    with tempfile.NamedTemporaryFile(suffix='.nc', delete=True) as tmp:
-        tmp.write(file_content)
-        chunks = {'time': 1000, 'latitude': 100, 'longitude': 100}
-        ds = xr.open_dataset(tmp.name, chunks=chunks, engine='netcdf4')
-    return ds
-
+    st.session_state['page'] = 'home'
+    st.session_state['datasets'] = []
+    st.session_state['merged_ds'] = None
+    st.session_state['time_var'] = None
+    st.session_state['single_ds'] = None
 def find_time_variable(ds):
+    """Find the time variable in the dataset"""
     time_vars = ['valid_time', 'time', 'TIME', 'datetime', 'date', 'Time']
-    return next((var for var in time_vars if var in ds.variables), None)
-
+    for var in time_vars:
+        if var in ds.variables:
+            return var
+    return None
 def get_variable_units(ds, var_name):
+    """Get original units from NC file"""
     try:
         return ds[var_name].attrs.get('units', 'No unit specified')
     except:
         return 'No unit specified'
-
 def convert_point_nc_to_excel(ds, selected_vars, lat, lon, time_var):
+    """Convert selected variables to Excel"""
     ds_point = ds.sel(latitude=lat, longitude=lon, method='nearest')
     
     time_values = pd.to_datetime(ds_point[time_var].values)
     formatted_time = time_values.strftime('%Y-%m-%d %H:%M')
+    max_length = len(time_values)
     
     df = pd.DataFrame({
         'observation_time (UTC)': formatted_time,
-        'longitude (DD)': [lon] * len(time_values),
-        'latitude (DD)': [lat] * len(time_values)
+        'longitude (DD)': [lon] * max_length,
+        'latitude (DD)': [lat] * max_length
     })
     
     for var_name in selected_vars:
         unit = get_variable_units(ds, var_name)
         column_name = f"{var_name} ({unit})"
         var_data = ds_point[var_name].values
-        df[column_name] = var_data.flatten() if var_data.size > 1 else var_data.item()
+        
+        if var_data.size == 1:
+            df[column_name] = var_data.item()
+        else:
+            df[column_name] = var_data.flatten()
     
     return df
-
 def merge_datasets(datasets):
-    if not datasets:
+    """Merge multiple datasets"""
+    if len(datasets) == 0:
         return None
     if len(datasets) == 1:
         return datasets[0]
-    merged = xr.merge(datasets, compat='override', join='outer')
-    return merged.chunk({'time': 1000})
-
+    return xr.merge(datasets)
 def visualize_data(df, selected_vars):
-    if len(df) > APP_CONFIG['MAX_PLOT_POINTS']:
-        sampling_rate = len(df) // APP_CONFIG['MAX_PLOT_POINTS']
-        df = df.iloc[::sampling_rate].copy()
+    """Create interactive plots with multiple variables on single plot"""
     
+    # Convert time format to HH:MM YYYY-MM-DD
     df['formatted_time'] = pd.to_datetime(df['observation_time (UTC)']).dt.strftime('%H:%M %Y-%m-%d')
     
+    # Create figure with reformatted time labels
     fig = px.line(df, x='formatted_time', y=selected_vars,
                   title='Variables Over Time')
     
@@ -117,7 +81,10 @@ def visualize_data(df, selected_vars):
             yanchor="bottom",
             y=1.02,
             xanchor="center",
-            x=0.5
+            x=0.5,
+            bgcolor="white",
+            bordercolor="Black",
+            borderwidth=1
         ),
         hovermode='x unified',
         plot_bgcolor='white',
@@ -127,15 +94,40 @@ def visualize_data(df, selected_vars):
             gridwidth=1,
             gridcolor='LightGray',
             type='category',
-            tickangle=45
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=True,
+            tickangle=45,
+            title_text='Time (HH:MM YYYY-MM-DD)'
         ),
         yaxis=dict(
             showgrid=True,
             gridwidth=1,
-            gridcolor='LightGray'
+            gridcolor='LightGray',
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=True
         ),
+        margin=dict(l=80, r=50, t=100, b=100),
         width=900,
-        height=600
+        height=600,
+        shapes=[
+            dict(
+                type='rect',
+                xref='paper',
+                yref='paper',
+                x0=0,
+                y0=0,
+                x1=1,
+                y1=1,
+                line=dict(
+                    color='black',
+                    width=2,
+                )
+            )
+        ]
     )
     
     st.plotly_chart(fig, use_container_width=True)
@@ -148,25 +140,26 @@ def visualize_data(df, selected_vars):
         file_name="plot.html",
         mime="text/html"
     )
-
 def process_dataset(ds):
+    """Process single dataset and display options"""
     time_var = find_time_variable(ds)
     if not time_var:
         st.error("No time variable found in the dataset.")
         return
-    
     st.write("### Dataset Information:")
     st.write(f"Dimensions: {dict(ds.dims)}")
     
-    var_info = [{
-        'Variable': var,
-        'Unit': get_variable_units(ds, var),
-        'Dimensions': ', '.join(ds[var].dims),
-        'Description': ds[var].attrs.get('long_name', 'No description available')
-    } for var in ds.variables]
-    
+    var_info = []
+    for var in ds.variables:
+        var_obj = ds[var]
+        original_unit = get_variable_units(ds, var)
+        var_info.append({
+            'Variable': var,
+            'Unit': original_unit,
+            'Dimensions': ', '.join(var_obj.dims),
+            'Description': var_obj.attrs.get('long_name', 'No description available')
+        })
     st.table(pd.DataFrame(var_info))
-    
     available_vars = [var for var in ds.variables
                      if var not in ['latitude', 'longitude', 'lat', 'lon', time_var]]
     
@@ -187,116 +180,136 @@ def process_dataset(ds):
     action = st.radio("Choose action:", ["Visualize", "Excel"])
     
     if selected_vars and st.button("Generate"):
-        with st.spinner('Processing data...'):
-            df = convert_point_nc_to_excel(ds, selected_vars, latitude, longitude, time_var)
+        df = convert_point_nc_to_excel(ds, selected_vars, latitude, longitude, time_var)
+        
+        if action == "Visualize":
+            visualize_data(df, df.columns[3:])
+        else:
+            st.write("### Data Preview:")
+            st.dataframe(df.head())
             
-            if action == "Visualize":
-                visualize_data(df, df.columns[3:])
-            else:
-                st.write("### Data Preview:")
-                st.dataframe(df.head())
-                
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df.to_excel(writer, index=False)
-                
-                st.download_button(
-                    label="📥 Download Excel",
-                    data=output.getvalue(),
-                    file_name=f"data_{latitude}_{longitude}.xlsx",
-                    mime="application/vnd.ms-excel"
-                )
-
-def main():
-    st.title('🌟 NetCDF File Manager')
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False)
+            output.seek(0)
+            
+            st.download_button(
+                label="📥 Download",
+                data=output.getvalue(),
+                file_name=f"data_{latitude}_{longitude}.xlsx",
+                mime="application/vnd.ms-excel"
+            )
+            st.success("✅ File ready for download!")
+# Top Navigation
+st.title('🌟 NetCDF File Manager')
+col1, col2, col3, col4 = st.columns([1,1,1,1])
+with col1:
+    if st.button('🏠 Home'):
+        st.session_state['page'] = 'home'
+with col2:
+    if st.button('📥 Convert NC to Excel'):
+        st.session_state['page'] = 'convert'
+with col3:
+    if st.button('🔄 Merge NC Files'):
+        st.session_state['page'] = 'merge'
+with col4:
+    if st.button('🔄 Reset', key="reset"):
+        st.session_state['page'] = 'home'
+        st.session_state['datasets'] = []
+        st.session_state['merged_ds'] = None
+        st.session_state['time_var'] = None
+        st.session_state['single_ds'] = None
+        st.experimental_rerun()
+st.markdown("---")
+# Page Content
+if st.session_state['page'] == 'home':
+    st.header("Welcome to NetCDF File Manager!")
+    st.write("""
+    ### Choose an operation from the top navigation:
     
-    # Navigation
-    cols = st.columns([1,1,1,1])
-    with cols[0]:
-        if st.button('🏠 Home'): st.session_state['page'] = 'home'
-    with cols[1]:
-        if st.button('📥 Convert NC to Excel'): st.session_state['page'] = 'convert'
-    with cols[2]:
-        if st.button('🔄 Merge NC Files'): st.session_state['page'] = 'merge'
-    with cols[3]:
-        if st.button('🔄 Reset'):
-            for key in ['page', 'datasets', 'merged_ds', 'time_var', 'single_ds']:
-                st.session_state[key] = None
-            st.session_state['page'] = 'home'
-            st.experimental_rerun()
-
-    st.markdown("---")
-
-    # Page Content
-    if st.session_state['page'] == 'home':
-        st.header("Welcome to NetCDF File Manager!")
-        st.write("""
-        ### Features Available:
-        - Handle large files (up to 5GB)
-        - Fast processing with parallel computing
-        - Interactive visualization
-        - Excel export
-        - Multiple file merging
-        - Time series analysis
-        """)
-
-    elif st.session_state['page'] == 'convert':
-        st.header("Convert NC File to Excel")
-        st.info(f"Maximum file size: {APP_CONFIG['MAX_FILE_SIZE']}MB")
-        
-        uploaded_file = st.file_uploader("Upload your .nc file", type='nc')
-        
-        if uploaded_file:
-            file_size = uploaded_file.size / (1024 * 1024)
+    - **Convert NC to Excel**: Convert single NC file to Excel format
+    - **Merge NC Files**: Merge multiple NC files and export/visualize
+    - **Reset**: Clear all data and start fresh
+    
+    ### Features Available:
+    - Single file conversion
+    - Multiple file merging
+    - Data visualization
+    - Excel export
+    - Original units preservation
+    - Time series analysis
+    """)
+elif st.session_state['page'] == 'convert':
+    st.header("Convert NC File to Excel")
+    uploaded_file = st.file_uploader("Upload your .nc file", type='nc')
+    
+    if uploaded_file:
+        with st.spinner('Processing NC file...'):
+            temp_dir = tempfile.mkdtemp()
+            temp_path = os.path.join(temp_dir, 'temp.nc')
             
-            if file_size > APP_CONFIG['MAX_FILE_SIZE']:
-                st.error(f"File too large! Maximum size is {APP_CONFIG['MAX_FILE_SIZE']}MB")
-            else:
-                with st.spinner(f'Processing {file_size:.1f}MB NC file...'):
-                    try:
-                        st.session_state['single_ds'] = load_large_nc_file(uploaded_file.read())
-                        process_dataset(st.session_state['single_ds'])
-                    except Exception as e:
-                        st.error(f"Error processing file: {str(e)}")
-
-    elif st.session_state['page'] == 'merge':
-        st.header("Merge Multiple NC Files")
-        st.info(f"Upload multiple NC files (Max {APP_CONFIG['MAX_FILE_SIZE']}MB each)")
-        
-        uploaded_files = st.file_uploader("Upload NC files", type='nc', accept_multiple_files=True)
-        
-        if uploaded_files:
-            total_size = sum(file.size for file in uploaded_files) / (1024 * 1024)
-            st.write(f"Total size: {total_size:.1f}MB")
+            with open(temp_path, 'wb') as f:
+                f.write(uploaded_file.getvalue())
             
-            if any(file.size / (1024 * 1024) > APP_CONFIG['MAX_FILE_SIZE'] for file in uploaded_files):
-                st.error(f"One or more files exceed the {APP_CONFIG['MAX_FILE_SIZE']}MB limit!")
-            else:
-                if len(uploaded_files) < 2:
-                    st.warning("Please upload at least 2 files")
-                else:
-                    if st.button("🔄 Merge Files"):
-                        progress_bar = st.progress(0)
-                        datasets = []
+            st.session_state['single_ds'] = xr.open_dataset(temp_path)
+            process_dataset(st.session_state['single_ds'])
+            
+            try:
+                os.remove(temp_path)
+                os.rmdir(temp_dir)
+            except:
+                pass
+elif st.session_state['page'] == 'merge':
+    st.header("Merge Multiple NC Files")
+    st.info("Please upload at least 2 NC files for merging")
+    uploaded_files = st.file_uploader("Upload multiple .nc files", type='nc', accept_multiple_files=True)
+    
+    if uploaded_files:
+        if len(uploaded_files) < 2:
+            st.warning("Please upload at least 2 files to merge. Currently uploaded: 1 file")
+        else:
+            st.write(f"Number of files ready to merge: {len(uploaded_files)}")
+            
+            if st.button("🔄 Merge Files"):
+                with st.spinner('Processing NC files...'):
+                    datasets = []
+                    for uploaded_file in uploaded_files:
+                        temp_dir = tempfile.mkdtemp()
+                        temp_path = os.path.join(temp_dir, 'temp.nc')
                         
-                        for i, file in enumerate(uploaded_files):
-                            try:
-                                ds = load_large_nc_file(file.read())
-                                datasets.append(ds)
-                                progress_bar.progress((i + 1) / len(uploaded_files))
-                            except Exception as e:
-                                st.error(f"Error processing {file.name}: {str(e)}")
-                                break
+                        with open(temp_path, 'wb') as f:
+                            f.write(uploaded_file.getvalue())
                         
-                        if len(datasets) == len(uploaded_files):
-                            st.session_state['merged_ds'] = merge_datasets(datasets)
-                            if st.session_state['merged_ds'] is not None:
-                                st.success(f"Successfully merged {len(datasets)} files!")
-                                process_dataset(st.session_state['merged_ds'])
-
-    # Footer
-    st.markdown("---")
-    st.markdown("### 📝 NetCDF File Manager - Optimized for Large Files")
-
-if __name__ == "__main__":
-    main()
+                        ds = xr.open_dataset(temp_path)
+                        datasets.append(ds)
+                        
+                        try:
+                            os.remove(temp_path)
+                            os.rmdir(temp_dir)
+                        except:
+                            pass
+                    
+                    st.session_state['merged_ds'] = merge_datasets(datasets)
+                    if st.session_state['merged_ds'] is not None:
+                        st.success(f"Successfully merged {len(datasets)} files!")
+                        
+                        nc_data = st.session_state['merged_ds'].to_netcdf(format='NETCDF3_64BIT')
+                        
+                        st.download_button(
+                            label="💾 Download Merged NC File",
+                            data=nc_data,
+                            file_name="merged_data.nc",
+                            mime="application/x-netcdf"
+                        )
+                        
+                        process_dataset(st.session_state['merged_ds'])
+                    else:
+                        st.error("Error merging datasets. Please check your files.")
+# Footer
+st.markdown("---")
+st.markdown("""
+### 📝 For Support And Assitance:
+Contact:
+Harshitha-gunnamharshitha2@gmail.com
+Varun-varunravichander2007@gmail.com
+""")
