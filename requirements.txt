@@ -4,3 +4,4 @@ plotly
 netCDF4
 xlsxwriter
 streamlit
+xarray
