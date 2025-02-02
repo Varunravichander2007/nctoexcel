@@ -24,16 +24,18 @@ os.environ['MALLOC_TRIM_THRESHOLD_'] = '65536'
 os.environ['PYTHONMALLOC'] = 'malloc'
 
 # Initialize Dask client with clean output
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=False, ttl=3600)
 def setup_dask():
-    with st.spinner('Initializing processing engine...'):
-        cluster = LocalCluster(n_workers=4, 
-                             threads_per_worker=2,
-                             memory_limit='4GB',
-                             silence_logs=logging.ERROR)
-        return Client(cluster)
+    cluster = LocalCluster(n_workers=4, 
+                         threads_per_worker=2,
+                         memory_limit='4GB',
+                         silence_logs=logging.ERROR,
+                         dashboard_address=None)
+    return Client(cluster, set_as_default=True)
 
-client = setup_dask()
+# Initialize client at the start
+if 'dask_client' not in st.session_state:
+    st.session_state.dask_client = setup_dask()
 
 # Page configuration
 st.set_page_config(
@@ -205,93 +207,96 @@ def process_dataset(ds):
                     mime="application/vnd.ms-excel"
                 )
 
-# UI Layout
-st.title('🌟 NetCDF File Manager')
-
-# Navigation
-cols = st.columns([1,1,1,1])
-with cols[0]:
-    if st.button('🏠 Home'): st.session_state['page'] = 'home'
-with cols[1]:
-    if st.button('📥 Convert NC to Excel'): st.session_state['page'] = 'convert'
-with cols[2]:
-    if st.button('🔄 Merge NC Files'): st.session_state['page'] = 'merge'
-with cols[3]:
-    if st.button('🔄 Reset'):
-        for key in ['page', 'datasets', 'merged_ds', 'time_var', 'single_ds']:
-            st.session_state[key] = None
-        st.session_state['page'] = 'home'
-        st.experimental_rerun()
-
-st.markdown("---")
-
-# Page Content
-if st.session_state['page'] == 'home':
-    st.header("Welcome to NetCDF File Manager!")
-    st.write("""
-    ### Features Available:
-    - Handle large files (up to 5GB)
-    - Fast processing with parallel computing
-    - Interactive visualization
-    - Excel export
-    - Multiple file merging
-    - Time series analysis
-    """)
-
-elif st.session_state['page'] == 'convert':
-    st.header("Convert NC File to Excel")
-    st.info(f"Maximum file size: {APP_CONFIG['MAX_FILE_SIZE']}MB")
+def main():
+    st.title('🌟 NetCDF File Manager')
     
-    uploaded_file = st.file_uploader("Upload your .nc file", type='nc')
-    
-    if uploaded_file:
-        file_size = uploaded_file.size / (1024 * 1024)
+    # Navigation
+    cols = st.columns([1,1,1,1])
+    with cols[0]:
+        if st.button('🏠 Home'): st.session_state['page'] = 'home'
+    with cols[1]:
+        if st.button('📥 Convert NC to Excel'): st.session_state['page'] = 'convert'
+    with cols[2]:
+        if st.button('🔄 Merge NC Files'): st.session_state['page'] = 'merge'
+    with cols[3]:
+        if st.button('🔄 Reset'):
+            for key in ['page', 'datasets', 'merged_ds', 'time_var', 'single_ds']:
+                st.session_state[key] = None
+            st.session_state['page'] = 'home'
+            st.experimental_rerun()
+
+    st.markdown("---")
+
+    # Page Content
+    if st.session_state['page'] == 'home':
+        st.header("Welcome to NetCDF File Manager!")
+        st.write("""
+        ### Features Available:
+        - Handle large files (up to 5GB)
+        - Fast processing with parallel computing
+        - Interactive visualization
+        - Excel export
+        - Multiple file merging
+        - Time series analysis
+        """)
+
+    elif st.session_state['page'] == 'convert':
+        st.header("Convert NC File to Excel")
+        st.info(f"Maximum file size: {APP_CONFIG['MAX_FILE_SIZE']}MB")
         
-        if file_size > APP_CONFIG['MAX_FILE_SIZE']:
-            st.error(f"File too large! Maximum size is {APP_CONFIG['MAX_FILE_SIZE']}MB")
-        else:
-            with st.spinner(f'Processing {file_size:.1f}MB NC file...'):
-                try:
-                    st.session_state['single_ds'] = load_large_nc_file(uploaded_file.read())
-                    process_dataset(st.session_state['single_ds'])
-                except Exception as e:
-                    st.error(f"Error processing file: {str(e)}")
-
-elif st.session_state['page'] == 'merge':
-    st.header("Merge Multiple NC Files")
-    st.info(f"Upload multiple NC files (Max {APP_CONFIG['MAX_FILE_SIZE']}MB each)")
-    
-    uploaded_files = st.file_uploader("Upload NC files", type='nc', accept_multiple_files=True)
-    
-    if uploaded_files:
-        total_size = sum(file.size for file in uploaded_files) / (1024 * 1024)
-        st.write(f"Total size: {total_size:.1f}MB")
+        uploaded_file = st.file_uploader("Upload your .nc file", type='nc')
         
-        if any(file.size / (1024 * 1024) > APP_CONFIG['MAX_FILE_SIZE'] for file in uploaded_files):
-            st.error(f"One or more files exceed the {APP_CONFIG['MAX_FILE_SIZE']}MB limit!")
-        else:
-            if len(uploaded_files) < 2:
-                st.warning("Please upload at least 2 files")
+        if uploaded_file:
+            file_size = uploaded_file.size / (1024 * 1024)
+            
+            if file_size > APP_CONFIG['MAX_FILE_SIZE']:
+                st.error(f"File too large! Maximum size is {APP_CONFIG['MAX_FILE_SIZE']}MB")
             else:
-                if st.button("🔄 Merge Files"):
-                    progress_bar = st.progress(0)
-                    datasets = []
-                    
-                    for i, file in enumerate(uploaded_files):
-                        try:
-                            ds = load_large_nc_file(file.read())
-                            datasets.append(ds)
-                            progress_bar.progress((i + 1) / len(uploaded_files))
-                        except Exception as e:
-                            st.error(f"Error processing {file.name}: {str(e)}")
-                            break
-                    
-                    if len(datasets) == len(uploaded_files):
-                        st.session_state['merged_ds'] = merge_datasets(datasets)
-                        if st.session_state['merged_ds'] is not None:
-                            st.success(f"Successfully merged {len(datasets)} files!")
-                            process_dataset(st.session_state['merged_ds'])
+                with st.spinner(f'Processing {file_size:.1f}MB NC file...'):
+                    try:
+                        st.session_state['single_ds'] = load_large_nc_file(uploaded_file.read())
+                        process_dataset(st.session_state['single_ds'])
+                    except Exception as e:
+                        st.error(f"Error processing file: {str(e)}")
 
-# Footer
-st.markdown("---")
-st.markdown("### 📝 NetCDF File Manager - Optimized for Large Files")
+    elif st.session_state['page'] == 'merge':
+        st.header("Merge Multiple NC Files")
+        st.info(f"Upload multiple NC files (Max {APP_CONFIG['MAX_FILE_SIZE']}MB each)")
+        
+        uploaded_files = st.file_uploader("Upload NC files", type='nc', accept_multiple_files=True)
+        
+        if uploaded_files:
+            total_size = sum(file.size for file in uploaded_files) / (1024 * 1024)
+            st.write(f"Total size: {total_size:.1f}MB")
+            
+            if any(file.size / (1024 * 1024) > APP_CONFIG['MAX_FILE_SIZE'] for file in uploaded_files):
+                st.error(f"One or more files exceed the {APP_CONFIG['MAX_FILE_SIZE']}MB limit!")
+            else:
+                if len(uploaded_files) < 2:
+                    st.warning("Please upload at least 2 files")
+                else:
+                    if st.button("🔄 Merge Files"):
+                        progress_bar = st.progress(0)
+                        datasets = []
+                        
+                        for i, file in enumerate(uploaded_files):
+                            try:
+                                ds = load_large_nc_file(file.read())
+                                datasets.append(ds)
+                                progress_bar.progress((i + 1) / len(uploaded_files))
+                            except Exception as e:
+                                st.error(f"Error processing {file.name}: {str(e)}")
+                                break
+                        
+                        if len(datasets) == len(uploaded_files):
+                            st.session_state['merged_ds'] = merge_datasets(datasets)
+                            if st.session_state['merged_ds'] is not None:
+                                st.success(f"Successfully merged {len(datasets)} files!")
+                                process_dataset(st.session_state['merged_ds'])
+
+    # Footer
+    st.markdown("---")
+    st.markdown("### 📝 NetCDF File Manager - Optimized for Large Files")
+
+if __name__ == "__main__":
+    main()
