@@ -3,11 +3,10 @@ import xarray as xr
 import pandas as pd
 import numpy as np
 import io
-import concurrent.futures
+import tempfile
+import os
 import plotly.express as px
-import zipfile
-import gzip
-from pathlib import Path
+import shutil
 
 # Page configuration
 st.set_page_config(
@@ -16,15 +15,13 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize session state
+# Initialize session state if not already done
 if 'page' not in st.session_state:
-    st.session_state.update({
-        'page': 'home',
-        'datasets': [],
-        'merged_ds': None,
-        'time_var': None,
-        'single_ds': None
-    })
+    st.session_state['page'] = 'home'
+    st.session_state['datasets'] = []
+    st.session_state['merged_ds'] = None
+    st.session_state['time_var'] = None
+    st.session_state['single_ds'] = None
 
 def find_time_variable(ds):
     """Find the time variable in the dataset"""
@@ -40,23 +37,6 @@ def get_variable_units(ds, var_name):
         return ds[var_name].attrs.get('units', 'No unit specified')
     except:
         return 'No unit specified'
-
-def load_compressed_file(uploaded_file):
-    """Handle compressed or uncompressed NC files"""
-    filename = uploaded_file.name.lower()
-    
-    if filename.endswith('.zip'):
-        with zipfile.ZipFile(io.BytesIO(uploaded_file.getvalue())) as z:
-            nc_file = [f for f in z.namelist() if f.endswith('.nc')][0]
-            with z.open(nc_file) as f:
-                return xr.open_dataset(f, decode_times=False)
-    
-    elif filename.endswith('.gz'):
-        with gzip.open(io.BytesIO(uploaded_file.getvalue())) as f:
-            return xr.open_dataset(f, decode_times=False)
-    
-    else:  # Regular .nc file
-        return xr.open_dataset(io.BytesIO(uploaded_file.getvalue()), decode_times=False)
 
 def convert_point_nc_to_excel(ds, selected_vars, lat, lon, time_var):
     """Convert selected variables to Excel"""
@@ -91,22 +71,25 @@ def merge_datasets(datasets):
     if len(datasets) == 1:
         return datasets[0]
     return xr.merge(datasets)
-
+    
 def visualize_data(df, selected_vars):
     """Create interactive plots with multiple variables on single plot"""
     
+    # Convert time format to HH:MM YYYY-MM-DD
     df['formatted_time'] = pd.to_datetime(df['observation_time (UTC)']).dt.strftime('%d-%m-%y %H:%M')
     
-    fig = px.line(df, x='formatted_time', y=selected_vars, title='Variables Over Time')
+    # Create figure with reformatted time labels
+    fig = px.line(df, x='formatted_time', y=selected_vars,
+                  title='Variables Over Time')
     
     fig.update_layout(
         showlegend=True,
         legend=dict(
-            orientation="v",
-            yanchor="middle",
-            y=0.5,
-            xanchor="left",
-            x=1.02,
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
             bgcolor="white",
             bordercolor="Black",
             borderwidth=1
@@ -123,7 +106,7 @@ def visualize_data(df, selected_vars):
             linewidth=1,
             linecolor='black',
             mirror=True,
-            tickangle=-90,
+            tickangle=-90,  # Changed to 90 for vertical labels
             title_text=''
         ),
         yaxis=dict(
@@ -135,7 +118,7 @@ def visualize_data(df, selected_vars):
             linecolor='black',
             mirror=True
         ),
-        margin=dict(l=80, r=150, t=100, b=100),
+        margin=dict(l=80, r=50, t=100, b=100),
         width=900,
         height=600,
         shapes=[
@@ -165,6 +148,8 @@ def visualize_data(df, selected_vars):
         file_name="plot.html",
         mime="text/html"
     )
+
+
 
 def process_dataset(ds):
     try:
@@ -227,29 +212,38 @@ def process_dataset(ds):
                     mime="application/vnd.ms-excel"
                 )
                 st.success("✅ File ready for download!")
-    except Exception as e:
-        st.error(f"Error processing dataset: {str(e)}")
+    finally:
+        if 'temp_dir' in locals():
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
 
-# Main navigation
+# Top Navigation
 st.title('🌟 NetCDF File Manager')
 
-cols = st.columns([1,1,1,1])
-nav_buttons = {
-    '🏠 Home': 'home',
-    '📥 Convert NC to Excel': 'convert',
-    '🔄 Merge NC Files': 'merge',
-    '🔄 Reset': 'reset'
-}
+col1, col2, col3, col4 = st.columns([1,1,1,1])
+with col1:
+    if st.button('🏠 Home', key='home_button'):
+        st.session_state['page'] = 'home'
+        st.rerun()
 
-for col, (button_text, page) in zip(cols, nav_buttons.items()):
-    with col:
-        if st.button(button_text):
-            if page == 'reset':
-                st.session_state.clear()
-                st.session_state['page'] = 'home'
-            else:
-                st.session_state['page'] = page
-            st.rerun()
+with col2:
+    if st.button('📥 Convert NC to Excel', key='convert_button'):
+        st.session_state['page'] = 'convert'
+        st.rerun()
+
+with col3:
+    if st.button('🔄 Merge NC Files', key='merge_button'):
+        st.session_state['page'] = 'merge'
+        st.rerun()
+
+with col4:
+    if st.button('🔄 Reset', key="reset_button"):
+        for key in st.session_state.keys():
+            del st.session_state[key]
+        st.session_state['page'] = 'home'
+        st.rerun()
 
 st.markdown("---")
 
@@ -257,52 +251,97 @@ st.markdown("---")
 if st.session_state['page'] == 'home':
     st.header("Welcome to NetCDF File Manager!")
     st.write("""
-    ### Supported File Formats:
-    - .nc (NetCDF files)
-    - .zip (Compressed NC files)
-    - .gz (Gzipped NC files)
+    ### Choose an operation from the top navigation:
     
-    ### Features:
-    - Efficient file processing
-    - Parallel file merging
-    - Compressed file support
+    - *Convert NC to Excel*: Convert single NC file to Excel format
+    - *Merge NC Files*: Merge multiple NC files and export/visualize
+    - *Reset*: Clear all data and start fresh
+    
+    ### Features Available:
+    - Single file conversion
+    - Multiple file merging
     - Data visualization
     - Excel export
+    - Original units preservation
+    - Time series analysis
     """)
 
 elif st.session_state['page'] == 'convert':
     st.header("Convert NC File to Excel")
-    uploaded_file = st.file_uploader("Upload .nc file (supports .nc, .zip, .gz)", 
-                                   type=['nc', 'zip', 'gz'])
+    uploaded_file = st.file_uploader("Upload your .nc file", type='nc')
     
     if uploaded_file:
-        with st.spinner('Processing file...'):
-            st.session_state['single_ds'] = load_compressed_file(uploaded_file)
+        with st.spinner('Processing NC file...'):
+            temp_dir = tempfile.mkdtemp()
+            temp_path = os.path.join(temp_dir, 'temp.nc')
+            
+            with open(temp_path, 'wb') as f:
+                f.write(uploaded_file.getvalue())
+            
+            st.session_state['single_ds'] = xr.open_dataset(temp_path)
             process_dataset(st.session_state['single_ds'])
+            
+            try:
+                os.remove(temp_path)
+                os.rmdir(temp_dir)
+            except:
+                pass
 
 elif st.session_state['page'] == 'merge':
     st.header("Merge Multiple NC Files")
-    uploaded_files = st.file_uploader("Upload NC files (supports .nc, .zip, .gz)", 
-                                    type=['nc', 'zip', 'gz'],
-                                    accept_multiple_files=True)
+    st.info("Please upload at least 2 NC files for merging")
+    uploaded_files = st.file_uploader("Upload multiple .nc files", type='nc', accept_multiple_files=True)
     
     if uploaded_files:
         if len(uploaded_files) < 2:
-            st.warning("Please upload at least 2 files to merge")
+            st.warning("Please upload at least 2 files to merge. Currently uploaded: 1 file")
         else:
+            st.write(f"Number of files ready to merge: {len(uploaded_files)}")
+            
             if st.button("🔄 Merge Files"):
-                with st.spinner('Processing files in parallel...'):
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        datasets = list(executor.map(load_compressed_file, uploaded_files))
+                with st.spinner('Processing NC files...'):
+                    datasets = []
+                    for uploaded_file in uploaded_files:
+                        temp_dir = tempfile.mkdtemp()
+                        temp_path = os.path.join(temp_dir, 'temp.nc')
+                        
+                        with open(temp_path, 'wb') as f:
+                            f.write(uploaded_file.getvalue())
+                        
+                        ds = xr.open_dataset(temp_path)
+                        datasets.append(ds)
+                        
+                        try:
+                            os.remove(temp_path)
+                            os.rmdir(temp_dir)
+                        except:
+                            pass
+                    
                     st.session_state['merged_ds'] = merge_datasets(datasets)
                     if st.session_state['merged_ds'] is not None:
                         st.success(f"Successfully merged {len(datasets)} files!")
+                        
+                        nc_data = st.session_state['merged_ds'].to_netcdf(format='NETCDF3_64BIT')
+                        
+                        st.download_button(
+                            label="💾 Download Merged NC File",
+                            data=nc_data,
+                            file_name="merged_data.nc",
+                            mime="application/x-netcdf"
+                        )
+                        
                         process_dataset(st.session_state['merged_ds'])
+                    else:
+                        st.error("Error merging datasets. Please check your files.")
 
 # Footer
 st.markdown("---")
 st.markdown("""
-### 📝 Contact Support:
-- Harshitha Gunnam (gunnamharshitha2@gmail.com)
-- Varun Ravichander (varunravichander2007@gmail.com)
+### 📝 For Support And Assistance:
+
+Contact:
+- Harshitha Gunnam
+  gunnamharshitha2@gmail.com
+- Varun Ravichander
+  varunravichander2007@gmail.com
 """)
