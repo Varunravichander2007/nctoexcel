@@ -1,5 +1,6 @@
 [server]
 maxUploadSize = 5000  # Increased for larger files
+connectTimeout = 300
 port = 8501
 address = "0.0.0.0"
 enableCORS = true
