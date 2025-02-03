@@ -78,18 +78,19 @@ def visualize_data(df, selected_vars):
     # Convert time format to HH:MM YYYY-MM-DD
     df['formatted_time'] = pd.to_datetime(df['observation_time (UTC)']).dt.strftime('%d-%m-%y %H:%M')
     
-    # Create figure with reformatted time labels
+    # Create figure with reformatted time labels and custom colors
     fig = px.line(df, x='formatted_time', y=selected_vars,
-                  title='Variables Over Time')
+                  title='Variables Over Time',
+                  color_discrete_sequence=px.colors.qualitative.Set1)  # Using colorful palette
     
     fig.update_layout(
         showlegend=True,
         legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5,
+            orientation="v",  # Changed to vertical
+            yanchor="top",   # Anchor to top
+            y=1,             # Position at top
+            xanchor="right", # Anchor to right
+            x=1.1,          # Position slightly outside the plot
             bgcolor="white",
             bordercolor="Black",
             borderwidth=1
@@ -106,7 +107,7 @@ def visualize_data(df, selected_vars):
             linewidth=1,
             linecolor='black',
             mirror=True,
-            tickangle=-90,  # Changed to 90 for vertical labels
+            tickangle=-90,
             title_text=''
         ),
         yaxis=dict(
@@ -118,7 +119,7 @@ def visualize_data(df, selected_vars):
             linecolor='black',
             mirror=True
         ),
-        margin=dict(l=80, r=50, t=100, b=100),
+        margin=dict(l=80, r=150, t=100, b=100),  # Increased right margin for legend
         width=900,
         height=600,
         shapes=[
@@ -140,6 +141,7 @@ def visualize_data(df, selected_vars):
     
     st.plotly_chart(fig, use_container_width=True)
     
+    # Save the colorful plot
     buffer = io.StringIO()
     fig.write_html(buffer)
     st.download_button(
